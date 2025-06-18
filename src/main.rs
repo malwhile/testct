@@ -1,6 +1,7 @@
 use anyhow::Result;
 use base64::prelude::*;
 use sct::{Log as SctLog, verify_sct};
+use x509_cert::der::{Decode, Encode};
 use std::{collections::HashMap, time::SystemTime};
 use x509_parser::{
     certificate::X509Certificate,
@@ -90,8 +91,29 @@ fn main() -> Result<()> {
         anyhow::bail!("Server Certificate Verification Failed: x509 - Bad Encoding.");
     };
 
-    // Due to weird formatting for Log in SCT create a seperate list first
+    println!("Cert Raw: {:?}", raw_cert);
+
+    // Due to formatting for Log in SCT create a seperate list first
     let log_list = parse_ct_log_list()?;
+
+    let curr_crt = x509_cert::Certificate::from_der(&raw_cert)?;
+    let curr_tbs = curr_crt.tbs_certificate;
+    let mut new_tbs = curr_tbs.clone(); 
+    let mut ext_list: Vec<x509_cert::ext::Extension> = curr_tbs.extensions.unwrap().clone();
+
+    let index = ext_list.iter().position(|x| *x.extn_id.to_string() == "1.3.6.1.4.1.11129.2.4.2".to_string()).unwrap();
+    ext_list.remove(index);
+
+    new_tbs.extensions = Some(ext_list);
+    let new_raw = &new_tbs.to_der()?;
+
+    //let needle = &[48, 130, 1, 125, 6, 10, 43, 6, 1, 4, 1, 214, 121, 2, 4, 2];
+    //let index = raw_cert.windows(needle.len()).position(|window| window == needle).unwrap();
+    //let new_raw = &raw_cert[0..index];
+    //let new_raw = &new_raw[8..new_raw.len()];
+
+    println!("NEW RAW = {:?}", new_raw);
+
 
     for extension in x509cert.extensions() {
         if extension.oid.to_id_string() == "1.3.6.1.4.1.11129.2.4.2".to_string() {
@@ -124,7 +146,7 @@ fn main() -> Result<()> {
                         .unwrap()
                         .as_secs();
 
-                    if let Err(error) = verify_sct(&raw_cert, sct_raw, now, &[&tmp_log]) {
+                    if let Err(error) = verify_sct(new_raw, sct_raw, now, &[&tmp_log]) {
                         println!("{:?} :: {}", error, "Failed to verify sct");
                     }
                 }
